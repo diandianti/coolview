@@ -10,7 +10,7 @@ Window {
     width: 1280
     height: 800
     color: "black"
-    title: "Dynamic Grid Viewer"
+    title: "CoolView"
     
     Shortcut { sequence: "F11";
         onActivated: mainWindow.visibility = (mainWindow.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen) }

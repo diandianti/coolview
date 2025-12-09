@@ -16,5 +16,6 @@
 uv run main.py
 ```
 
-2. windows用户，直接在release中下载使用，地址
+2. windows用户，直接在release中下载使用，地址（等我打包上传）
 
+3. android用户，下载apk 然后运行 地址 https://github.com/diandianti/coolview/releases/tag/v1.0.0

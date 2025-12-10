@@ -18,4 +18,4 @@ uv run main.py
 
 2. windows用户，直接在release中下载解压后使用，地址https://github.com/diandianti/coolview/releases/tag/win_v1.0.0
 
-3. android用户，下载apk 然后运行 地址 https://github.com/diandianti/coolview/releases/tag/v1.0.0
+3. android用户，下载apk 然后运行 地址 [https://github.com/diandianti/coolview/releases/tag/v1.0.0](https://github.com/diandianti/coolview/releases)

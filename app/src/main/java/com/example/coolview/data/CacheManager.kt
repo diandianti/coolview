@@ -2,6 +2,7 @@ package com.example.coolview.data
 
 import android.content.Context
 import android.util.Log
+import com.example.coolview.model.ImageItem
 import java.io.File
 import java.io.InputStream
 import java.security.MessageDigest
@@ -43,6 +44,25 @@ object CacheManager {
         }
     }
 
+    // [修改] 核心逻辑：基于 URI + 文件属性 生成 Hash，不包含 sceneName
+    fun generateKey(item: ImageItem): String {
+        // 组合字符串：URI + LastModified + FileSize
+        val rawKey = "${item.uri}|${item.lastModified}|${item.fileSize}"
+        return try {
+            val digest = MessageDigest.getInstance("MD5")
+            digest.update(rawKey.toByteArray())
+            val messageDigest = digest.digest()
+            val hexString = StringBuilder()
+            for (b in messageDigest) {
+                hexString.append(String.format("%02x", b))
+            }
+            hexString.toString()
+        } catch (e: Exception) {
+            rawKey.hashCode().toString()
+        }
+    }
+
+    // 保留旧方法以兼容（如果需要），或者主要用于纯 URI 的场景
     fun generateKey(uri: String): String {
         return try {
             val digest = MessageDigest.getInstance("MD5")
@@ -90,7 +110,6 @@ object CacheManager {
         }
     }
 
-    // [新增] 接受已经准备好的临时文件，将其重命名为正式缓存文件
     fun saveFile(context: Context, key: String, tempFile: File): File? {
         ensureInitialized(context)
         val targetFile = getFile(context, key)
@@ -101,7 +120,6 @@ object CacheManager {
                 targetFile.delete()
             }
 
-            // 尝试原子重命名
             if (tempFile.renameTo(targetFile)) {
                 val newSize = targetFile.length()
                 lruIndex[key] = newSize
@@ -112,7 +130,6 @@ object CacheManager {
                 }
                 return targetFile
             } else {
-                // 如果跨文件系统移动失败，则降级为复制
                 try {
                     tempFile.inputStream().use { input ->
                         targetFile.outputStream().use { output -> input.copyTo(output) }

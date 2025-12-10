@@ -8,6 +8,7 @@ import coil.imageLoader
 import coil.request.ImageRequest
 import com.example.coolview.data.CacheManager
 import com.example.coolview.data.ClientFactory
+import com.example.coolview.data.RemoteEntry
 import com.example.coolview.model.ImageItem
 import com.example.coolview.model.Scene
 import com.example.coolview.model.SourceConfig
@@ -35,7 +36,6 @@ data class VisualSettings(
     val refreshInterval: Long = 5000L,
     val layoutChaos: Float = 0.2f,
     val autoScrollSpeed: Float = 2.0f,
-    // [新增] 屏幕常亮设置，默认为开启
     val keepScreenOn: Boolean = true
 )
 
@@ -164,6 +164,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         saveScenesLocally()
     }
 
+    // [新增] 供 UI 调用以获取远程文件夹列表
+    suspend fun fetchRemoteFolders(config: SourceConfig, path: String): List<RemoteEntry> {
+        val context = getApplication<Application>().applicationContext
+        return ClientFactory.listRemoteFolders(context, config, path)
+    }
+
     private fun startPrefetchLoop() {
         repeat(2) {
             viewModelScope.launch(Dispatchers.IO) {
@@ -197,7 +203,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (list.isEmpty()) return null
         repeat(20) {
             val item = list.random()
-            val key = CacheManager.generateKey(item.uri)
+            // [修改] 适配新的 generateKey(item) 方法
+            val key = CacheManager.generateKey(item)
             if (CacheManager.hasFile(context, key)) {
                 return item
             }

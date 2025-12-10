@@ -3,6 +3,7 @@ package com.example.coolview.ui.screens
 import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -27,25 +28,28 @@ import com.example.coolview.model.SourceConfig
 import com.example.coolview.model.SourceType
 import com.example.coolview.viewmodel.MainViewModel
 import com.example.coolview.ui.screens.config.*
+import kotlinx.coroutines.launch
 
 @Composable
 fun ConfigScreen(
     viewModel: MainViewModel,
     onStartClicked: () -> Unit,
-    onAboutClicked: () -> Unit // [新增参数]
+    onAboutClicked: () -> Unit
 ) {
     val scenes by viewModel.scenes.collectAsState()
     val currentSceneId by viewModel.currentSceneId.collectAsState()
 
-    // 计算当前显示的源列表
     val currentSources = remember(scenes, currentSceneId) {
         scenes.find { it.id == currentSceneId }?.sources ?: emptyList()
     }
 
-    // UI State
     var selectedTabIndex by remember { mutableIntStateOf(0) }
     var editingSourceId by remember { mutableStateOf<String?>(null) }
     var showNewSceneDialog by remember { mutableStateOf(false) }
+
+    // Remote Picker State
+    var showRemotePicker by remember { mutableStateOf(false) }
+    var remotePickerConfig by remember { mutableStateOf<SourceConfig?>(null) }
 
     var pathInput by remember { mutableStateOf("") }
     var hostInput by remember { mutableStateOf("") }
@@ -99,12 +103,45 @@ fun ConfigScreen(
         }
     }
 
+    // 尝试构建临时配置用于远程浏览
+    fun tryLaunchRemotePicker() {
+        val tempConfig = buildConfig(
+            selectedTabIndex, editingSourceId, pathInput, hostInput, shareInput,
+            userInput, passInput, subPathInput, recursiveInput
+        )
+
+        val isRemoteType = tempConfig?.type == SourceType.SMB || tempConfig?.type == SourceType.WEBDAV
+        val hasHostAndShare = tempConfig?.host.isNullOrBlank().not()
+        // SMB需要Share, WebDAV不需要Share但通常Host是URL
+        val isValid = if(tempConfig?.type == SourceType.SMB) hasHostAndShare && tempConfig.share.isNotBlank() else hasHostAndShare
+
+        if (isRemoteType && isValid) {
+            remotePickerConfig = tempConfig
+            showRemotePicker = true
+        } else {
+            Toast.makeText(context, "Please fill in Host/Share details first", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     if (showNewSceneDialog) {
         NewSceneDialog(
             onDismiss = { showNewSceneDialog = false },
             onConfirm = { name ->
                 viewModel.addScene(name)
                 showNewSceneDialog = false
+            }
+        )
+    }
+
+    // [引用] 远程文件夹选择弹窗 (现已移至独立文件)
+    if (showRemotePicker && remotePickerConfig != null) {
+        RemoteFolderPicker(
+            viewModel = viewModel,
+            initialConfig = remotePickerConfig!!,
+            onDismiss = { showRemotePicker = false },
+            onConfirm = { selectedPath ->
+                subPathInput = selectedPath
+                showRemotePicker = false
             }
         )
     }
@@ -122,7 +159,6 @@ fun ConfigScreen(
     ) {
         Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
 
-            // [新增] 顶部标题栏和关于按钮
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
@@ -192,6 +228,7 @@ fun ConfigScreen(
                             onShareChange = { shareInput = it }, onUserChange = { userInput = it },
                             onPassChange = { passInput = it }, onSubPathChange = { subPathInput = it }, onRecursiveChange = { recursiveInput = it },
                             launchPicker = { folderPicker.launch(null) },
+                            launchRemotePicker = { tryLaunchRemotePicker() },
                             onSave = {
                                 val configToSave = buildConfig(selectedTabIndex, editingSourceId, pathInput, hostInput, shareInput, userInput, passInput, subPathInput, recursiveInput)
                                 if (configToSave != null) {
@@ -229,6 +266,7 @@ fun ConfigScreen(
                         onShareChange = { shareInput = it }, onUserChange = { userInput = it },
                         onPassChange = { passInput = it }, onSubPathChange = { subPathInput = it }, onRecursiveChange = { recursiveInput = it },
                         launchPicker = { folderPicker.launch(null) },
+                        launchRemotePicker = { tryLaunchRemotePicker() },
                         onSave = {
                             val configToSave = buildConfig(selectedTabIndex, editingSourceId, pathInput, hostInput, shareInput, userInput, passInput, subPathInput, recursiveInput)
                             if (configToSave != null) {

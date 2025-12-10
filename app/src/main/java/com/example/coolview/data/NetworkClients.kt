@@ -23,8 +23,10 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import java.util.Properties
 
+// [新增] 用于文件夹选择器的数据类
+data class RemoteEntry(val name: String, val isDirectory: Boolean)
+
 object ClientFactory {
-    // 限制缓存处理的最大尺寸，防止加载超大图导致 OOM
     private const val CACHE_MAX_DIMENSION = 1920
     private const val CACHE_COMPRESS_QUALITY = 80
     private const val TAG = "ClientFactory"
@@ -37,6 +39,69 @@ object ClientFactory {
         }
     }
 
+    // [新增] 用于列出远程文件夹
+    suspend fun listRemoteFolders(context: Context, config: SourceConfig, relativePath: String): List<RemoteEntry> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<RemoteEntry>()
+        try {
+            when (config.type) {
+                SourceType.SMB -> {
+                    val props = Properties().apply {
+                        setProperty("jcifs.smb.client.responseTimeout", "5000")
+                        setProperty("jcifs.smb.client.soTimeout", "5000")
+                    }
+                    val baseContext = BaseContext(PropertyConfiguration(props))
+                    val auth = NtlmPasswordAuthentication(baseContext, null, config.user, config.password)
+                    val ctx = baseContext.withCredentials(auth)
+
+                    // 构造 URL: smb://host/share/path/
+                    val safeHost = config.host.removeSuffix("/")
+                    val safeShare = config.share.removePrefix("/").removeSuffix("/")
+                    // relativePath 通常以 / 开头，这里去掉
+                    val safePath = relativePath.removePrefix("/").removeSuffix("/")
+
+                    val url = if (safeShare.isNotEmpty()) {
+                        if (safePath.isNotEmpty()) "smb://$safeHost/$safeShare/$safePath/"
+                        else "smb://$safeHost/$safeShare/"
+                    } else {
+                        "smb://$safeHost/" // 只有主机名，可能列出共享
+                    }
+
+                    val dir = SmbFile(url, ctx)
+                    dir.listFiles()?.forEach { f ->
+                        if (f.isDirectory) {
+                            val name = f.name.removeSuffix("/")
+                            list.add(RemoteEntry(name, true))
+                        }
+                    }
+                }
+                SourceType.WEBDAV -> {
+                    val sardine = OkHttpSardine()
+                    sardine.setCredentials(config.user, config.password)
+                    val host = config.host.removeSuffix("/")
+                    val path = relativePath.removePrefix("/").removeSuffix("/")
+                    val fullUrl = if (path.isNotEmpty()) "$host/$path/" else "$host/"
+
+                    val resources = sardine.list(fullUrl)
+                    resources.forEach { res ->
+                        // 过滤掉当前目录本身
+                        val resPath = res.path.toString()
+                        val fullResUrl = if (resPath.startsWith("http")) resPath else "$host$resPath"
+                        val isSelf = fullResUrl.trimEnd('/') == fullUrl.trimEnd('/')
+
+                        if (!isSelf && res.isDirectory) {
+                            list.add(RemoteEntry(res.name, true))
+                        }
+                    }
+                }
+                else -> { /* Local not supported here */ }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            throw e // 抛出异常供 UI 显示
+        }
+        list.sortedBy { it.name }
+    }
+
     suspend fun fetchImageData(context: Context, item: ImageItem): Any? = withContext(Dispatchers.IO) {
         try {
             when (item.sourceConfig.type) {
@@ -45,14 +110,15 @@ object ClientFactory {
                     else File(item.uri)
                 }
                 else -> {
-                    val cacheKey = CacheManager.generateKey(item.uri)
-                    // 1. 检查缓存
+                    // [修改] 使用包含属性的新 Key 生成逻辑
+                    val cacheKey = CacheManager.generateKey(item)
+
                     if (CacheManager.hasFile(context, cacheKey)) {
                         val file = CacheManager.getFile(context, cacheKey)
                         if (isValidImageFile(file)) return@withContext file
                         else file.delete()
                     }
-                    // 2. 下载并转码（优化版）
+
                     val downloadedFile = downloadAndTranscodeOptimized(context, item, cacheKey)
                     if (downloadedFile != null && isValidImageFile(downloadedFile)) downloadedFile
                     else {
@@ -76,20 +142,12 @@ object ClientFactory {
         } catch (e: Exception) { return false }
     }
 
-    /**
-     * OOM 修复核心方法：
-     * 1. 流式下载到临时文件 (Raw)
-     * 2. 读取尺寸计算采样率 (inSampleSize)
-     * 3. 加载缩小的 Bitmap
-     * 4. 压缩保存并回收内存
-     */
     private fun downloadAndTranscodeOptimized(context: Context, item: ImageItem, key: String): File? {
         val tempRawFile = File(context.cacheDir, "${key}_raw.tmp")
         val tempProcessedFile = File(context.cacheDir, "${key}_processed.tmp")
         var bitmap: Bitmap? = null
 
         try {
-            // 步骤 1: 网络流 -> 本地临时文件 (避免内存持有完整字节流)
             getStream(item)?.use { input ->
                 FileOutputStream(tempRawFile).use { output ->
                     input.copyTo(output)
@@ -98,20 +156,16 @@ object ClientFactory {
 
             if (!tempRawFile.exists() || tempRawFile.length() == 0L) return null
 
-            // 步骤 2: 只解码边界，计算采样率
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(tempRawFile.absolutePath, options)
 
             options.inSampleSize = calculateInSampleSize(options, CACHE_MAX_DIMENSION, CACHE_MAX_DIMENSION)
             options.inJustDecodeBounds = false
-            // 使用 RGB_565 减少一半内存占用（如果不需要透明度）
             options.inPreferredConfig = Bitmap.Config.RGB_565
 
-            // 步骤 3: 根据采样率加载 Bitmap
             bitmap = BitmapFactory.decodeFile(tempRawFile.absolutePath, options)
 
             if (bitmap != null) {
-                // 步骤 4: 压缩并写入处理后的临时文件
                 FileOutputStream(tempProcessedFile).use { outStream ->
                     val format = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
                         Bitmap.CompressFormat.WEBP_LOSSY
@@ -121,21 +175,16 @@ object ClientFactory {
                     bitmap?.compress(format, CACHE_COMPRESS_QUALITY, outStream)
                 }
 
-                // 关键：立即回收 Bitmap
                 bitmap?.recycle()
                 bitmap = null
-
-                // 步骤 5: 移交给 CacheManager (原子重命名)
                 return CacheManager.saveFile(context, key, tempProcessedFile)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Transcode failed: ${e.message}")
             e.printStackTrace()
         } finally {
-            // 清理资源
             bitmap?.recycle()
             if (tempRawFile.exists()) tempRawFile.delete()
-            // 如果处理失败，清理产生的临时文件；如果成功，saveFile 内部会处理 rename，这里再次检查删除防残留
             if (tempProcessedFile.exists()) tempProcessedFile.delete()
         }
         return null
@@ -177,7 +226,7 @@ object ClientFactory {
         }
     }
 
-    // --- 扫描逻辑 (保持原有不变) ---
+    // --- 扫描逻辑 ---
 
     private fun scanLocal(context: Context, config: SourceConfig): List<ImageItem> {
         val images = mutableListOf<ImageItem>()
@@ -195,11 +244,17 @@ object ClientFactory {
             if (root.exists()) {
                 if (config.recursive) {
                     root.walkTopDown().forEach { file ->
-                        if (file.isFile && isImage(file.name)) images.add(ImageItem(file.absolutePath, config))
+                        if (file.isFile && isImage(file.name)) {
+                            // [修改] 捕获文件属性
+                            images.add(ImageItem(file.absolutePath, config, file.lastModified(), file.length()))
+                        }
                     }
                 } else {
                     root.listFiles()?.forEach { file ->
-                        if (file.isFile && isImage(file.name)) images.add(ImageItem(file.absolutePath, config))
+                        if (file.isFile && isImage(file.name)) {
+                            // [修改] 捕获文件属性
+                            images.add(ImageItem(file.absolutePath, config, file.lastModified(), file.length()))
+                        }
                     }
                 }
             }
@@ -212,7 +267,8 @@ object ClientFactory {
             if (file.isDirectory) {
                 if (recursive) scanDocumentRecursive(file, config, list, true)
             } else if (file.name != null && isImage(file.name!!)) {
-                list.add(ImageItem(file.uri.toString(), config))
+                // DocumentFile 获取属性较慢，这里尽量获取
+                list.add(ImageItem(file.uri.toString(), config, file.lastModified(), file.length()))
             }
         }
     }
@@ -246,7 +302,8 @@ object ClientFactory {
                     if (f.isDirectory) {
                         if (recursive) scanSmbRecursive(f.path, ctx, config, list, true)
                     } else if (isImage(fileName)) {
-                        list.add(ImageItem(f.path, config))
+                        // [修改] 捕获 SMB 文件属性
+                        list.add(ImageItem(f.path, config, f.lastModified, f.length()))
                     }
                 } catch (e: Exception) { }
             }
@@ -269,7 +326,10 @@ object ClientFactory {
                 resources.forEach { res ->
                     if (!res.isDirectory && isImage(res.name)) {
                         val imgUrl = if (res.path.toString().startsWith("http")) res.path.toString() else "$host${res.path}"
-                        images.add(ImageItem(imgUrl, config))
+                        // [修改] 捕获 WebDAV 文件属性
+                        val lastMod = res.modified?.time ?: 0L
+                        val size = res.contentLength ?: 0L
+                        images.add(ImageItem(imgUrl, config, lastMod, size))
                     }
                 }
             }
@@ -289,7 +349,10 @@ object ClientFactory {
                     if (res.isDirectory) {
                         scanWebDavRecursive(sardine, fullResUrl, hostBase, config, list)
                     } else if (isImage(res.name)) {
-                        list.add(ImageItem(fullResUrl, config))
+                        // [修改] 递归时捕获属性
+                        val lastMod = res.modified?.time ?: 0L
+                        val size = res.contentLength ?: 0L
+                        list.add(ImageItem(fullResUrl, config, lastMod, size))
                     }
                 }
             }

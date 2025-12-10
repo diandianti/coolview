@@ -28,9 +28,12 @@ fun EditorPanel(
     onPathChange: (String) -> Unit, onHostChange: (String) -> Unit, onShareChange: (String) -> Unit,
     onUserChange: (String) -> Unit, onPassChange: (String) -> Unit, onSubPathChange: (String) -> Unit,
     onRecursiveChange: (Boolean) -> Unit,
-    launchPicker: () -> Unit, onSave: () -> Unit
+    launchPicker: () -> Unit,
+    launchRemotePicker: () -> Unit,
+    onSave: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // --- 标题栏 ---
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = if (editingSourceId != null) "Editing Source" else "Add New Source",
@@ -40,6 +43,7 @@ fun EditorPanel(
             if (editingSourceId != null) TextButton(onClick = clearForm) { Text("Cancel", color = Color.Gray) }
         }
 
+        // --- 标签页 (Tabs) ---
         val tabs = listOf("Local", "SMB", "WebDAV")
         TabRow(
             selectedTabIndex = selectedTabIndex, containerColor = Color.Transparent, contentColor = accentColor,
@@ -52,18 +56,30 @@ fun EditorPanel(
 
         Spacer(modifier = Modifier.height(8.dp))
 
+        // --- 表单内容 ---
         when (selectedTabIndex) {
             0 -> {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = if (pathInput.startsWith("content://")) "Folder Selected" else pathInput,
-                        onValueChange = {}, label = { Text("Local Folder") }, leadingIcon = { Icon(Icons.Outlined.Folder, null) },
-                        modifier = Modifier.weight(1f), readOnly = true, colors = textFieldColors()
-                    )
-                    Button(onClick = launchPicker, shape = RoundedCornerShape(8.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333))) { Text("Select") }
-                }
+                // [修改] Local 模式：移除外部 Button，将选择操作集成到 TextField 的 trailingIcon 中
+                OutlinedTextField(
+                    value = pathInput,
+                    onValueChange = {}, // 本地路径通常由选择器只读填充
+                    label = { Text("Local Folder Path") },
+                    modifier = Modifier.fillMaxWidth(),
+                    readOnly = true, // 禁止手动输入，防止 URI 格式错误
+                    colors = textFieldColors(),
+                    trailingIcon = {
+                        IconButton(onClick = launchPicker) {
+                            Icon(
+                                imageVector = Icons.Outlined.Folder,
+                                contentDescription = "Select Local Folder",
+                                tint = accentColor
+                            )
+                        }
+                    }
+                )
             }
             1, 2 -> {
+                // SMB / WebDAV 模式
                 val isSmb = selectedTabIndex == 1
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(value = hostInput, onValueChange = onHostChange, label = { Text(if (isSmb) "Server IP" else "WebDAV URL") }, modifier = Modifier.weight(1f), colors = textFieldColors())
@@ -73,11 +89,28 @@ fun EditorPanel(
                     OutlinedTextField(value = userInput, onValueChange = onUserChange, label = { Text("Username") }, modifier = Modifier.weight(1f), colors = textFieldColors())
                     OutlinedTextField(value = passInput, onValueChange = onPassChange, label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.weight(1f), colors = textFieldColors())
                 }
-                OutlinedTextField(value = subPathInput, onValueChange = onSubPathChange, label = { Text("Subfolder Path") }, modifier = Modifier.fillMaxWidth(), colors = textFieldColors())
+
+                // [修改] 远程子路径：同样使用集成式按钮风格
+                OutlinedTextField(
+                    value = subPathInput,
+                    onValueChange = onSubPathChange,
+                    label = { Text("Subfolder Path") },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = textFieldColors(),
+                    trailingIcon = {
+                        IconButton(onClick = launchRemotePicker) {
+                            Icon(
+                                imageVector = Icons.Outlined.Folder,
+                                contentDescription = "Select Remote Folder",
+                                tint = accentColor
+                            )
+                        }
+                    }
+                )
             }
         }
 
-        // 递归扫描选项
+        // --- 递归扫描选项 ---
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -93,6 +126,7 @@ fun EditorPanel(
             Text("Scan subfolders recursively", color = Color.LightGray, fontSize = 14.sp)
         }
 
+        // --- 保存按钮 ---
         Button(
             onClick = onSave,
             modifier = Modifier.align(Alignment.End).padding(top = 8.dp),
@@ -111,7 +145,8 @@ fun EditorPanel(
 fun textFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedBorderColor = Color(0xFF00E5FF), unfocusedBorderColor = Color(0x44FFFFFF),
     focusedLabelColor = Color(0xFF00E5FF), unfocusedLabelColor = Color.Gray,
-    focusedTextColor = Color.White, unfocusedTextColor = Color.White
+    focusedTextColor = Color.White, unfocusedTextColor = Color.White,
+    cursorColor = Color(0xFF00E5FF)
 )
 
 fun buildConfig(

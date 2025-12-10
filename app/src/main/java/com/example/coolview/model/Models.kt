@@ -14,11 +14,9 @@ data class SourceConfig(
     val share: String = "",
     val user: String = "",
     val password: String = "",
-    // [新增] 是否递归扫描子文件夹
     val recursive: Boolean = true
 )
 
-// [新增] 场景模型，用于保存不同的配置集合
 @Serializable
 data class Scene(
     val id: String = UUID.randomUUID().toString(),
@@ -26,7 +24,10 @@ data class Scene(
     val sources: List<SourceConfig> = emptyList()
 )
 
+// [修改] 增加文件属性字段，用于生成精确的缓存 Key，但不包含场景名以共享缓存
 data class ImageItem(
     val uri: String,
-    val sourceConfig: SourceConfig
+    val sourceConfig: SourceConfig,
+    val lastModified: Long = 0,    // 新增：文件最后修改时间
+    val fileSize: Long = 0         // 新增：文件大小
 )
